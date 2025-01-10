@@ -4,7 +4,9 @@ import com.expediagroup.graphql.server.types.GraphQLBatchRequest
 import com.expediagroup.graphql.server.types.GraphQLRequest
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import io.ktor.http.HttpMethod
+import io.ktor.server.request.ApplicationReceivePipeline
 import io.ktor.server.request.ApplicationRequest
+import io.ktor.server.testing.TestApplicationCall
 import io.ktor.server.testing.TestApplicationRequest
 import io.mockk.coEvery
 import io.mockk.every
@@ -35,6 +37,7 @@ class KtorGraphQLRequestParserTest {
     fun `parseRequest should throw IllegalStateException if request method is GET without query`() = runTest {
         val request = mockk<ApplicationRequest>(relaxed = true) {
             every { queryParameters[REQUEST_PARAM_QUERY] } returns null
+            every { queryParameters[REQUEST_PARAM_EXTENSIONS] } returns null
             every { local.method } returns HttpMethod.Get
         }
         assertFailsWith<IllegalStateException> {
@@ -60,6 +63,7 @@ class KtorGraphQLRequestParserTest {
             every { queryParameters[REQUEST_PARAM_QUERY] } returns "{ foo }"
             every { queryParameters[REQUEST_PARAM_OPERATION_NAME] } returns null
             every { queryParameters[REQUEST_PARAM_VARIABLES] } returns null
+            every { queryParameters[REQUEST_PARAM_EXTENSIONS] } returns null
             every { local.method } returns HttpMethod.Get
         }
         val graphQLRequest = parser.parseRequest(serverRequest)
@@ -76,6 +80,7 @@ class KtorGraphQLRequestParserTest {
             every { queryParameters[REQUEST_PARAM_QUERY] } returns "query MyFoo { foo }"
             every { queryParameters[REQUEST_PARAM_OPERATION_NAME] } returns "MyFoo"
             every { queryParameters[REQUEST_PARAM_VARIABLES] } returns """{"a":1}"""
+            every { queryParameters[REQUEST_PARAM_EXTENSIONS] } returns null
             every { local.method } returns HttpMethod.Get
         }
         val graphQLRequest = parser.parseRequest(serverRequest)
@@ -87,15 +92,41 @@ class KtorGraphQLRequestParserTest {
     }
 
     @Test
+    fun `parseRequest should return request if method is GET with hash only`() = runTest {
+        val serverRequest = mockk<ApplicationRequest>(relaxed = true) {
+            every { queryParameters[REQUEST_PARAM_QUERY] } returns null
+            every { queryParameters[REQUEST_PARAM_OPERATION_NAME] } returns "MyFoo"
+            every { queryParameters[REQUEST_PARAM_VARIABLES] } returns """{"a":1}"""
+            every { queryParameters[REQUEST_PARAM_EXTENSIONS] } returns """{"persistedQuery":{"version":1,"sha256Hash":"some-hash"}}"""
+            every { local.method } returns HttpMethod.Get
+        }
+        val graphQLRequest = parser.parseRequest(serverRequest)
+        assertNotNull(graphQLRequest)
+        assertTrue(graphQLRequest is GraphQLRequest)
+        assertEquals("", graphQLRequest.query)
+        assertEquals("MyFoo", graphQLRequest.operationName)
+        assertEquals(1, graphQLRequest.variables?.get("a"))
+        assertEquals(
+            mapOf("version" to 1, "sha256Hash" to "some-hash"),
+            graphQLRequest.extensions?.get("persistedQuery")
+        )
+    }
+
+    @Test
     fun `parseRequest should return request if method is POST`() = runTest {
         val mockRequest = GraphQLRequest("query MyFoo { foo }", "MyFoo", mapOf("a" to 1))
-        val serverRequest = mockk<TestApplicationRequest>(relaxed = true) {
-            every { call } returns mockk(relaxed = true) {
+        val serverRequest = TestApplicationRequest(
+            call = mockk<TestApplicationCall>(relaxed = true) {
+                every { application } returns mockk(relaxed = true) {
+                    every { receivePipeline } returns ApplicationReceivePipeline()
+                }
+                coEvery { receiveNullable<Any>(any()) } answers { callOriginal() }
                 every { attributes.getOrNull<Any>(any()) } returns null
                 coEvery { request.pipeline.execute(any(), any()) } returns mockRequest
-            }
-            every { local.method } returns HttpMethod.Post
-        }
+            },
+            closeRequest = true,
+            method = HttpMethod.Post
+        )
 
         val graphQLRequest = parser.parseRequest(serverRequest)
         assertNotNull(graphQLRequest)
@@ -111,13 +142,18 @@ class KtorGraphQLRequestParserTest {
         val mockRequest2 = GraphQLRequest("query MyBar { bar }", "MyBar")
         val mockRequest = GraphQLBatchRequest(listOf(mockRequest1, mockRequest2))
 
-        val serverRequest = mockk<TestApplicationRequest>(relaxed = true) {
-            every { call } returns mockk(relaxed = true) {
+        val serverRequest = TestApplicationRequest(
+            call = mockk<TestApplicationCall>(relaxed = true) {
+                every { application } returns mockk(relaxed = true) {
+                    every { receivePipeline } returns ApplicationReceivePipeline()
+                }
+                coEvery { receiveNullable<Any>(any()) } answers { callOriginal() }
                 every { attributes.getOrNull<Any>(any()) } returns null
                 coEvery { request.pipeline.execute(any(), any()) } returns mockRequest
-            }
-            every { local.method } returns HttpMethod.Post
-        }
+            },
+            closeRequest = true,
+            method = HttpMethod.Post
+        )
 
         val graphQLServerRequest = parser.parseRequest(serverRequest)
         assertNotNull(graphQLServerRequest)

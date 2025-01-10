@@ -21,8 +21,6 @@ import com.expediagroup.graphql.server.execution.subscription.GRAPHQL_WS_PROTOCO
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.ktor.http.ContentType
 import io.ktor.serialization.jackson.jackson
-import io.ktor.server.application.call
-import io.ktor.server.application.install
 import io.ktor.server.application.plugin
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.response.respondText
